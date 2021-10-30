@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-20.04
     name: "Build Docker images"
     env:
-      REPO: pufferpanel/pufferpanel
+      REPO: jlopez994/pufferpanel
       VERSION: latest
     strategy:
       matrix:
@@ -44,6 +44,7 @@ jobs:
       with:
         context: .
         push: true
+        tags: ${{ env.REPO }}:${{ env.VERSION }}
         build-args: |
           sha: ${{ github.sha }}
           version: ${{ env.VERSION }}
