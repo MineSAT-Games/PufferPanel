@@ -26,7 +26,7 @@ RUN go build -v -tags $tags -ldflags "-X 'github.com/pufferpanel/pufferpanel/v2.
 # Generate final image
 ###
 
-FROM alpine
+FROM docker:latest
 COPY --from=builder /pufferpanel /pufferpanel
 
 EXPOSE 8080 5657
