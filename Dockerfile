@@ -27,6 +27,9 @@ RUN go build -v -tags $tags -ldflags "-X 'github.com/pufferpanel/pufferpanel/v2.
 ###
 
 FROM docker:latest
+
+RUN apk add --no-cache bash
+
 COPY --from=builder /pufferpanel /pufferpanel
 
 EXPOSE 8080 5657
