@@ -26,9 +26,7 @@ RUN go build -v -tags $tags -ldflags "-X 'github.com/pufferpanel/pufferpanel/v2.
 # Generate final image
 ###
 
-FROM docker:latest
-
-RUN apk add --no-cache bash
+FROM alpine
 
 COPY --from=builder /pufferpanel /pufferpanel
 
