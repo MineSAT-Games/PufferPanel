@@ -18,7 +18,7 @@ RUN apt-get update && \
 RUN apt-get install -y git wget curl zip unzip
 
 # docker
-RUN curl -sSL https://get.docker.com | sh
+RUN curl -sSL https://get.docker.com | bash
 
 # java
 RUN apt-get update && \
