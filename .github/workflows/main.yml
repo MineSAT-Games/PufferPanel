@@ -18,7 +18,7 @@ jobs:
     name: "Build Docker images"
     env:
       REPO: jlopez994/pufferpanel
-      VERSION: latest
+      VERSION: base
     strategy:
       matrix:
         platform: ["linux/amd64"]
@@ -43,7 +43,7 @@ jobs:
       uses: docker/build-push-action@v2
       with:
         context: .
-        push: true
+        push: false
         tags: ${{ env.REPO }}:${{ env.VERSION }}
         build-args: |
           sha: ${{ github.sha }}
@@ -56,7 +56,7 @@ jobs:
     needs: [ "build-docker-image-base" ]
     env:
       REPO: jlopez994/pufferpanel
-      VERSION: base
+      VERSION: latest
 
     strategy:
       matrix:
