@@ -20,6 +20,10 @@ RUN apt-get install -y git wget curl zip unzip
 # docker
 RUN curl -sSL https://get.docker.com | bash
 
+# docker-compose
+RUN curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+RUN chmod +x /usr/local/bin/docker-compose
+
 # java
 RUN apt-get update && \
     apt-get install -y openjdk-8-jdk-headless openjdk-16-jdk-headless && \
