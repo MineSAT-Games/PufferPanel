@@ -181,4 +181,7 @@ func loadCoreModules() {
 
 	extractFactory := extract.Factory
 	commandMapping[extractFactory.Key()] = extractFactory
+
+	//programFactory := program.Factory
+	//commandMapping[programFactory.Key()] = programFactory
 }
