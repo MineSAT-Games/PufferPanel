@@ -83,18 +83,16 @@ func openConnection() (err error) {
 	}
 
 	gormConfig := gorm.Config{}
+	gormConfig.Logger = logger.New(log.New(os.Stdout, "\r\n", log.LstdFlags), logger.Config{
+		SlowThreshold:             time.Second, // Slow SQL threshold
+		LogLevel:                  logger.Warn,
+		IgnoreRecordNotFoundError: true,
+		Colorful:                  false,
+	})
+
 	if config.GetBool("panel.database.log") {
-		logging.Info().Printf("Database logging enabled")
-		newLogger := logger.New(
-			log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
-			logger.Config{
-				SlowThreshold:             time.Second, // Slow SQL threshold
-				LogLevel:                  logger.Info, // Log level
-				IgnoreRecordNotFoundError: true,        // Ignore ErrRecordNotFound error for logger
-				Colorful:                  false,       // Disable color
-			},
-		)
-		gormConfig.Logger = newLogger
+		logging.Info.Printf("Database logging enabled")
+		gormConfig.Logger.LogMode(logger.Info)
 	}
 
 	// Sqlite doesn't implement constraints see  https://github.com/go-gorm/gorm/wiki/GORM-V2-Release-Note-Draft#all-new-migratolease-Note-Draft#all-new-migrator
@@ -104,7 +102,7 @@ func openConnection() (err error) {
 
 	if err != nil {
 		dbConn = nil
-		logging.Error().Printf("Error connecting to database: %s", err)
+		logging.Error.Printf("Error connecting to database: %s", err)
 		return pufferpanel.ErrDatabaseNotAvailable
 	}
 	if err := migrateModels(); err != nil {
@@ -123,8 +121,10 @@ func GetConnection() (*gorm.DB, error) {
 }
 
 func Close() {
-	sqlDB, _ := dbConn.DB()
-	pufferpanel.Close(sqlDB)
+	if dbConn != nil {
+		sqlDB, _ := dbConn.DB()
+		pufferpanel.Close(sqlDB)
+	}
 }
 
 func migrateModels() error {
@@ -150,9 +150,9 @@ func migrateModels() error {
 		//SQLite does not support creating FKs like this, so we can't just enable them...
 		/*var res = dbConn.Exec("PRAGMA foreign_keys = ON")
 		if res.RowsAffected == 0 {
-			logging.Error().Println("SQLite does not support FKs")
+			logging.Error.Println("SQLite does not support FKs")
 		} else {
-			logging.Debug().Printf("%v\n", res.Value)
+			logging.Debug.Printf("%v\n", res.Value)
 		}*/
 		return nil
 	}

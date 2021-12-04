@@ -43,6 +43,7 @@ func registerServers(g *gin.RouterGroup) {
 	g.Handle("PUT", "/:serverId", handlers.OAuth2Handler(pufferpanel.ScopeServersCreate, false), middleware.HasTransaction, createServer)
 	g.Handle("POST", "/:serverId", handlers.OAuth2Handler(pufferpanel.ScopeServersEdit, true), middleware.HasTransaction, createServer)
 	g.Handle("DELETE", "/:serverId", handlers.OAuth2Handler(pufferpanel.ScopeServersDelete, true), middleware.HasTransaction, deleteServer)
+	g.Handle("PUT", "/:serverId/name/:name", handlers.OAuth2Handler(pufferpanel.ScopeServersEdit, true), middleware.HasTransaction, renameServer)
 	g.Handle("OPTIONS", "/:serverId", response.CreateOptions("PUT", "GET", "POST", "DELETE"))
 
 	g.Handle("GET", "/:serverId/user", handlers.OAuth2Handler(pufferpanel.ScopeServersEditUsers, true), getServerUsers)
@@ -346,7 +347,7 @@ func createServer(c *gin.Context) {
 	if nodeResponse.StatusCode != http.StatusOK {
 		buf := new(bytes.Buffer)
 		_, _ = buf.ReadFrom(nodeResponse.Body)
-		logging.Error().Printf("Unexpected response from daemon: %+v\n%s", nodeResponse.StatusCode, buf.String())
+		logging.Error.Printf("Unexpected response from daemon: %+v\n%s", nodeResponse.StatusCode, buf.String())
 		response.HandleError(c, pufferpanel.ErrUnknownError, http.StatusInternalServerError)
 		return
 	}
@@ -363,7 +364,7 @@ func createServer(c *gin.Context) {
 		}, true)
 		if err != nil {
 			//since we don't want to tell the user it failed, we'll log and move on
-			logging.Error().Printf("Error sending email: %s", err)
+			logging.Error.Printf("Error sending email: %s", err)
 		}
 	}
 
@@ -473,7 +474,7 @@ func deleteServer(c *gin.Context) {
 		}, true)
 		if err != nil {
 			//since we don't want to tell the user it failed, we'll log and move on
-			logging.Error().Printf("Error sending email: %s\n", err)
+			logging.Error.Printf("Error sending email: %s\n", err)
 		}
 	}
 
@@ -637,7 +638,7 @@ func editServerUser(c *gin.Context) {
 		}, true)
 		if err != nil {
 			//since we don't want to tell the user it failed, we'll log and move on
-			logging.Error().Printf("Error sending email: %s\n", err)
+			logging.Error.Printf("Error sending email: %s\n", err)
 		}
 	}
 
@@ -715,10 +716,69 @@ func removeServerUser(c *gin.Context) {
 	}, true)
 	if err != nil {
 		//since we don't want to tell the user it failed, we'll log and move on
-		logging.Error().Printf("Error sending email: %s\n", err)
+		logging.Error.Printf("Error sending email: %s\n", err)
 	}
 
 	c.Status(http.StatusNoContent)
+}
+
+// @Summary Rename server
+// @Description Renames a server
+// @Accept json
+// @Produce json
+// @Success 200
+// @Failure 400 {object} response.Error
+// @Failure 403 {object} response.Error
+// @Failure 404 {object} response.Error
+// @Failure 500 {object} response.Error
+// @Param id path string false "Server ID"
+// @Param name path string false "Server Name"
+// @Router /api/servers/{id}/name [post]
+func renameServer(c *gin.Context) {
+	var err error
+
+	t, exist := c.Get("server")
+	if !exist {
+		logging.Error.Printf("getting server for rename with err `%s`", err)
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	server, ok := t.(*models.Server)
+	if !ok {
+		response.HandleError(c, pufferpanel.ErrUnknownError, http.StatusInternalServerError)
+		return
+	}
+
+	name := c.Param("name")
+	if name == "" {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	t, exist = c.Get("db")
+	if !exist {
+		logging.Error.Printf("getting server for rename with err `%s`", err)
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+
+	db, ok := t.(*gorm.DB)
+	if !ok {
+		response.HandleError(c, pufferpanel.ErrUnknownError, http.StatusInternalServerError)
+		return
+	}
+	ss := &services.Server{DB: db}
+
+	server.Name = name
+	err = ss.Update(server)
+	if err != nil {
+		logging.Error.Printf("renaming server with err `%s`", err)
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
 }
 
 /*// @Summary Gets available OAuth2 scopes for the calling user
@@ -747,6 +807,16 @@ func getAvailableOauth2Perms(c *gin.Context) {
 	c.JSON(http.StatusOK, perms.ToScopes())
 }*/
 
+// @Summary Gets server-level OAuth2 credentials for the logged in user
+// @Accept json
+// @Produce json
+// @Success 200 {object} []models.Client
+// @Failure 400 {object} response.Error
+// @Failure 403 {object} response.Error
+// @Failure 404 {object} response.Error
+// @Failure 500 {object} response.Error
+// @Param id path string true "Server ID"
+// @Router /api/servers/{id}/oauth2 [get]
 func getOAuth2Clients(c *gin.Context) {
 	user := c.MustGet("user").(*models.User)
 	server := c.MustGet("server").(*models.Server)
@@ -762,6 +832,17 @@ func getOAuth2Clients(c *gin.Context) {
 	c.JSON(http.StatusOK, clients)
 }
 
+// @Summary Creates server-level OAuth2 credentials for the logged in user
+// @Accept json
+// @Produce json
+// @Success 200 {object} models.CreatedClient
+// @Failure 400 {object} response.Error
+// @Failure 403 {object} response.Error
+// @Failure 404 {object} response.Error
+// @Failure 500 {object} response.Error
+// @Param id path string true "Server ID"
+// @Param body body models.Client false "Client to create"
+// @Router /api/servers/{id}/oauth2 [post]
 func createOAuth2Client(c *gin.Context) {
 	user := c.MustGet("user").(*models.User)
 	server := c.MustGet("server").(*models.Server)
@@ -769,10 +850,18 @@ func createOAuth2Client(c *gin.Context) {
 	db := middleware.GetDatabase(c)
 	os := &services.OAuth2{DB: db}
 
+	var request models.Client
+	err := c.BindJSON(&request)
+	if response.HandleError(c, err, http.StatusBadRequest) {
+		return
+	}
+
 	client := &models.Client{
-		ClientId: uuid.NewV4().String(),
-		UserId:   user.ID,
-		ServerId: server.Identifier,
+		ClientId:    uuid.NewV4().String(),
+		UserId:      user.ID,
+		ServerId:    server.Identifier,
+		Name:        request.Name,
+		Description: request.Description,
 	}
 
 	secret, err := pufferpanel.GenerateRandomString(36)
@@ -790,16 +879,23 @@ func createOAuth2Client(c *gin.Context) {
 		return
 	}
 
-	type createdClient struct {
-		ClientId     string `json:"id"`
-		ClientSecret string `json:"secret"`
-	}
-	c.JSON(http.StatusOK, createdClient{
+	c.JSON(http.StatusOK, models.CreatedClient{
 		ClientId:     client.ClientId,
 		ClientSecret: secret,
 	})
 }
 
+// @Summary Deletes server-level OAuth2 credential
+// @Accept json
+// @Produce json
+// @Success 204 {object} response.Empty
+// @Failure 400 {object} response.Error
+// @Failure 403 {object} response.Error
+// @Failure 404 {object} response.Error
+// @Failure 500 {object} response.Error
+// @Param id path string true "Server ID"
+// @Param clientId path string true "Client ID"
+// @Router /api/servers/{id}/oauth2/{clientId} [delete]
 func deleteOAuth2Client(c *gin.Context) {
 	user := c.MustGet("user").(*models.User)
 	server := c.MustGet("server").(*models.Server)

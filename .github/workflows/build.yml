@@ -7,6 +7,7 @@ on:
     - v2.*
     paths-ignore:
       - '.github/workflows/release.yml'
+      - '.github/workflows/pr.yml'
 
 jobs:
   skip-build:
@@ -106,10 +107,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       run: echo "VERSION=${GITHUB_REF/refs\/tags\/v/}" >> $GITHUB_ENV
 
-    - name: Set up Go 1.15.6
+    - name: Set up Go 1.17
       uses: actions/setup-go@v2
       with:
-        go-version: 1.15.6
+        go-version: '^1.17'
 
     - uses: actions/download-artifact@v2
       with:
@@ -147,6 +148,46 @@ jobs:
       with:
         name: pufferpanel_${{ env.VERSION }}_windows_amd64.zip
         path: build-artifacts/
+        
+  build-windows-installer:
+    name: Build Windows Installer
+    runs-on: windows-latest
+    needs: ['build-windows-amd64-binaries']
+    
+    steps:
+    - name: Get the version
+      run: |
+        $VERSION="0.0.${{ github.run_number }}"
+        if ("${{ github.ref }}".startsWith("refs/tags/v")) {
+          $VERSION="${{ github.ref }}".substring('refs/tags/v'.length)
+        }
+        echo VERSION=$VERSION | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf-8 -Append
+        
+    - name: Get extra files
+      run: |
+        git init
+        git remote add origin https://github.com/${{ github.repository }}.git
+        git fetch
+        git checkout -m origin/${{ github.ref_name }} installer.wxs
+        git checkout -m origin/${{ github.ref_name }} LICENSE.rtf
+            
+    - uses: actions/download-artifact@v2
+      with:
+        name: pufferpanel_${{ env.VERSION }}_windows_amd64.zip
+    
+    - name: Generate MSI     
+      run: |
+        $env:Path += ";C:\Program Files (x86)\WiX Toolset v3.11\bin"      
+        heat dir www -out www.wxs -gg -g1 -ke -nologo -cg WwwComponent -dr APPLICATIONROOTDIRECTORY
+        heat dir email -out email.wxs -gg -g1 -ke -nologo -cg EmailComponent -dr APPLICATIONROOTDIRECTORY
+        candle *.wxs -arch x64 -dProductVersion="${{ env.VERSION }}" -ext WixFirewallExtension
+        light *.wixobj -out pufferpanel.msi -b email -b www -ext WixUIExtension -ext WixFirewallExtension -cultures:en-us        
+        
+    - name: Publish Artifacts
+      uses: actions/upload-artifact@v1
+      with:
+        name: pufferpanel_${{ env.VERSION }}_installer.msi
+        path: pufferpanel.msi
 
   build-linux-amd64-binaries:
     name: Build Binaries - Linux AMD64
@@ -161,10 +202,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       run: echo "VERSION=${GITHUB_REF/refs\/tags\/v/}" >> $GITHUB_ENV
 
-    - name: Set up Go 1.15.6
+    - name: Set up Go 1.17
       uses: actions/setup-go@v2
       with:
-        go-version: 1.15.6
+        go-version: '^1.17'
 
     - name: Download APT packages
       if: steps.aptcache.outputs.cache-hit != 'true'
@@ -290,10 +331,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       run: echo "VERSION=${GITHUB_REF/refs\/tags\/v/}" >> $GITHUB_ENV
 
-    - name: Set up Go 1.15.6
+    - name: Set up Go 1.17
       uses: actions/setup-go@v2
       with:
-        go-version: 1.15.6
+        go-version: '^1.17'
 
     - uses: actions/download-artifact@v2
       with:
@@ -385,10 +426,10 @@ jobs:
       if: startsWith(github.ref, 'refs/tags/v')
       run: echo "VERSION=${GITHUB_REF/refs\/tags\/v/}" >> $GITHUB_ENV
 
-    - name: Set up Go 1.15.6
+    - name: Set up Go 1.17
       uses: actions/setup-go@v2
       with:
-        go-version: 1.15.6
+        go-version: '^1.17'
 
     - uses: actions/download-artifact@v2
       with:
@@ -594,7 +635,7 @@ jobs:
 
     strategy:
       matrix:
-        variant: ["java", "java8", "java16", "nodejs", "srcds"]
+        variant: ["java", "java8", "java16", "java17", "nodejs", "srcds"]
         platform: ["linux/amd64"]
 
     steps:

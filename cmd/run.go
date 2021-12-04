@@ -32,7 +32,6 @@ import (
 	"github.com/pufferpanel/pufferpanel/v2/web"
 	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/cobra"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -49,24 +48,23 @@ var runCmd = &cobra.Command{
 }
 
 func executeRun(cmd *cobra.Command, args []string) {
-	err := internalRun(cmd, args)
+	c := make(chan error)
+	term := make(chan bool)
+
+	internalRun(c, term)
+	err := <-c
 	if err != nil {
-		logging.Error().Printf("An error occurred: %s", err.Error())
+		logging.Error.Printf("An error occurred: %s", err.Error())
 	}
 }
 
-func internalRun(cmd *cobra.Command, args []string) error {
+func internalRun(c chan error, terminate chan bool) {
 	if err := config.LoadConfigFile(""); err != nil {
-		return err
+		c <- err
+		return
 	}
 
-	logging.Initialize()
-
-	defer logging.Close()
-	defer database.Close()
-
-	c := make(chan error)
-
+	logging.Initialize(true)
 	signal.Ignore(syscall.SIGPIPE, syscall.SIGHUP)
 
 	go func() {
@@ -76,13 +74,15 @@ func internalRun(cmd *cobra.Command, args []string) error {
 		// kill -9 is syscall.SIGKILL but can"t be catch, so don't need add it
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
-		log.Println("Shutting down...")
-		c <- nil
+		logging.Info.Println("Shutting down...")
+		terminate <- true
 	}()
 
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(gin.LoggerWithWriter(logging.Debug().Writer()))
+	router.Use(gin.LoggerWithWriter(logging.Info.Writer()))
+	gin.DefaultWriter = logging.Info.Writer()
+	gin.DefaultErrorWriter = logging.Error.Writer()
 	pufferpanel.Engine = router
 
 	if config.GetBool("panel.enable") {
@@ -90,13 +90,15 @@ func internalRun(cmd *cobra.Command, args []string) error {
 
 		if config.GetString("panel.sessionKey") == "" {
 			if err := config.Set("panel.sessionKey", securecookie.GenerateRandomKey(32)); err != nil {
-				return err
+				c <- err
+				return
 			}
 		}
 
 		result, err := hex.DecodeString(config.GetString("panel.sessionKey"))
 		if err != nil {
-			return err
+			c <- err
+			return
 		}
 		sessionStore := cookie.NewStore(result)
 		router.Use(sessions.Sessions("session", sessionStore))
@@ -109,19 +111,38 @@ func internalRun(cmd *cobra.Command, args []string) error {
 	web.RegisterRoutes(router)
 
 	go func() {
-		l, err := net.Listen("tcp4", config.GetString("web.host"))
+		l, err := net.Listen("tcp", config.GetString("web.host"))
 		if err != nil {
 			c <- err
 			return
 		}
 
-		logging.Info().Printf("Listening for HTTP requests on %s", l.Addr().String())
-		for err = manners.Serve(l, router); err != nil && err != http.ErrServerClosed; err = manners.Serve(l, router) {
+		logging.Info.Printf("Listening for HTTP requests on %s", l.Addr().String())
+		err = manners.Serve(l, router)
+		if err != nil && err != http.ErrServerClosed {
 			c <- err
+			terminate <- true
 		}
 	}()
 
-	return <-c
+	go func() {
+		//wait for the termination signal, so we can shut down
+		<-terminate
+
+		//shut down everything
+		//all of these can be closed regardless of what type of install this is, as they all check if they are even being
+		//used
+
+		manners.Close()
+		sftp.Stop()
+		programs.ShutdownService()
+		database.Close()
+
+		//return out, the upper layers know how to handle this
+		c <- nil
+	}()
+
+	return
 }
 
 func panel(ch chan error) {
@@ -133,7 +154,7 @@ func panel(ch chan error) {
 
 	err := config.LoadConfigDatabase(database.GetConnector())
 	if err != nil {
-		logging.Error().Printf("Error loading config from database: %s", err.Error())
+		logging.Error.Printf("Error loading config from database: %s", err.Error())
 	}
 
 	//validate local daemon is configured in this panel
@@ -145,12 +166,12 @@ func panel(ch chan error) {
 		ns := &services.Node{DB: db}
 		nodes, err := ns.GetAll()
 		if err != nil {
-			logging.Error().Printf("Failed to get nodes: %s", err.Error())
+			logging.Error.Printf("Failed to get nodes: %s", err.Error())
 			return
 		}
 
 		if len(*nodes) == 0 {
-			logging.Info().Printf("Adding local node")
+			logging.Info.Printf("Adding local node")
 			create := &models.Node{
 				Name:        "LocalNode",
 				PublicHost:  "127.0.0.1",
@@ -181,7 +202,7 @@ func panel(ch chan error) {
 
 			err = ns.Create(create)
 			if err != nil {
-				logging.Error().Printf("Failed to add local node: %s", err.Error())
+				logging.Error.Printf("Failed to add local node: %s", err.Error())
 			}
 		}
 	}
@@ -197,7 +218,7 @@ func daemon(ch chan error) {
 	var err error
 
 	if _, err = os.Stat(pufferpanel.ServerFolder); os.IsNotExist(err) {
-		logging.Error().Printf("No server directory found, creating")
+		logging.Error.Printf("No server directory found, creating")
 		err = os.MkdirAll(pufferpanel.ServerFolder, 0755)
 		if err != nil && !os.IsExist(err) {
 			ch <- err
@@ -213,7 +234,7 @@ func daemon(ch chan error) {
 		if element.IsEnabled() {
 			element.GetEnvironment().DisplayToConsole(true, "Daemon has been started\n")
 			if element.IsAutoStart() {
-				logging.Info().Printf("Queued server %s", element.Id())
+				logging.Info.Printf("Queued server %s", element.Id())
 				element.GetEnvironment().DisplayToConsole(true, "Server has been queued to start\n")
 				programs.StartViaService(element)
 			}

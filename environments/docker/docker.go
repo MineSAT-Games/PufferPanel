@@ -28,11 +28,11 @@ import (
 	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/client"
 	"github.com/docker/go-connections/nat"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pufferpanel/pufferpanel/v2"
 	"github.com/pufferpanel/pufferpanel/v2/logging"
 	"github.com/pufferpanel/pufferpanel/v2/messages"
 	"io"
-	"io/ioutil"
 	"os"
 	"path"
 	"runtime"
@@ -42,14 +42,13 @@ import (
 
 type docker struct {
 	*pufferpanel.BaseEnvironment
-	ContainerId  string              `json:"-"`
-	ImageName    string              `json:"image"`
-	Binds        map[string]string   `json:"bindings,omitempty"`
-	NetworkMode  string              `json:"networkMode,omitempty"`
-	Network      string              `json:"networkName,omitempty"`
-	Ports        []string            `json:"portBindings,omitempty"`
-	Resources    container.Resources `json:"resources,omitempty"`
-	ExposedPorts nat.PortSet         `json:"exposedPorts,omitempty"`
+	ContainerId string              `json:"-"`
+	ImageName   string              `json:"image"`
+	Binds       map[string]string   `json:"bindings,omitempty"`
+	NetworkMode string              `json:"networkMode,omitempty"`
+	Network     string              `json:"networkName,omitempty"`
+	Ports       []string            `json:"portBindings,omitempty"`
+	Resources   container.Resources `json:"resources,omitempty"`
 
 	connection       types.HijackedResponse
 	cli              *client.Client
@@ -116,7 +115,7 @@ func (d *docker) dockerExecuteAsync(steps pufferpanel.ExecutionData) error {
 		_ = dockerClient.ContainerRemove(ctx, d.ContainerId, types.ContainerRemoveOptions{})
 		d.Wait.Done()
 		if err != nil {
-			logging.Error().Printf("Error stopping container "+d.ContainerId, err)
+			logging.Error.Printf("Error stopping container "+d.ContainerId, err)
 		}
 
 		msg := messages.Status{Running: false}
@@ -173,6 +172,20 @@ func (d *docker) Kill() (err error) {
 }
 
 func (d *docker) Create() error {
+	go func() {
+		c, err := d.getClient()
+		if err != nil {
+			logging.Error.Printf("Error getting docker client: %s\n", err.Error())
+			d.DisplayToConsole(true, "Error downloading image")
+			return
+		}
+		err = d.pullImage(c, context.Background(), false)
+		if err != nil {
+			logging.Error.Printf("Error downloading image: %s\n", err.Error())
+			d.DisplayToConsole(true, "Error downloading image")
+			return
+		}
+	}()
 	return os.Mkdir(d.RootDirectory, 0755)
 }
 
@@ -286,6 +299,10 @@ func (d *docker) doesContainerExist(client *client.Client, ctx context.Context) 
 }
 
 func (d *docker) pullImage(client *client.Client, ctx context.Context, force bool) error {
+	if d.downloadingImage {
+		return pufferpanel.ErrImageDownloading
+	}
+
 	exists := false
 
 	opts := types.ImageListOptions{
@@ -303,7 +320,7 @@ func (d *docker) pullImage(client *client.Client, ctx context.Context, force boo
 		exists = true
 	}
 
-	logging.Debug().Printf("Does image %v exist? %v", d.ImageName, exists)
+	logging.Debug.Printf("Does image %v exist? %v", d.ImageName, exists)
 
 	if exists && !force {
 		return nil
@@ -311,26 +328,34 @@ func (d *docker) pullImage(client *client.Client, ctx context.Context, force boo
 
 	op := types.ImagePullOptions{}
 
-	logging.Debug().Printf("Downloading image %v", d.ImageName)
+	logging.Debug.Printf("Downloading image %v", d.ImageName)
 	d.DisplayToConsole(true, "Downloading image for container, please wait\n")
 
 	d.downloadingImage = true
+	defer func() {
+		d.downloadingImage = false
+	}()
 
 	r, err := client.ImagePull(ctx, d.ImageName, op)
 	defer pufferpanel.Close(r)
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(ioutil.Discard, r)
 
-	d.downloadingImage = false
-	logging.Debug().Printf("Downloaded image %v", d.ImageName)
+	w := &ImageWriter{Parent: d.WSManager}
+	_, err = io.Copy(w, r)
+
+	if err != nil {
+		return err
+	}
+
+	logging.Debug.Printf("Downloaded image %v", d.ImageName)
 	d.DisplayToConsole(true, "Downloaded image for container\n")
 	return err
 }
 
 func (d *docker) createContainer(client *client.Client, ctx context.Context, cmd string, args []string, env map[string]string, workDir string) error {
-	logging.Debug().Printf("Creating container")
+	logging.Debug.Printf("Creating container")
 	containerRoot := "/pufferpanel"
 	err := d.pullImage(client, ctx, false)
 
@@ -357,7 +382,7 @@ func (d *docker) createContainer(client *client.Client, ctx context.Context, cmd
 		workDir = containerRoot
 	}
 
-	logging.Debug().Printf("Container command: %s\n", cmdSlice)
+	logging.Debug.Printf("Container command: %s\n", cmdSlice)
 
 	containerConfig := &container.Config{
 		AttachStderr:    true,
@@ -370,7 +395,6 @@ func (d *docker) createContainer(client *client.Client, ctx context.Context, cmd
 		Image:           d.ImageName,
 		WorkingDir:      workDir,
 		Env:             newEnv,
-		ExposedPorts:    d.ExposedPorts,
 	}
 
 	if runtime.GOOS == "linux" {
@@ -408,7 +432,14 @@ func (d *docker) createContainer(client *client.Client, ctx context.Context, cmd
 	}
 	hostConfig.PortBindings = bindings
 
-	_, err = client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, d.ContainerId)
+	exposedPorts := make(nat.PortSet)
+	for k, _ := range bindings {
+		exposedPorts[k] = struct{}{}
+	}
+	containerConfig.ExposedPorts = exposedPorts
+
+	//for now, default to linux across the board. This resolves problems that Windows has when you use it and docker
+	_, err = client.ContainerCreate(ctx, containerConfig, hostConfig, networkConfig, &v1.Platform{OS: "linux"}, d.ContainerId)
 	return err
 }
 

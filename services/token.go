@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/pufferpanel/pufferpanel/v2"
 	"github.com/pufferpanel/pufferpanel/v2/config"
 	"github.com/pufferpanel/pufferpanel/v2/logging"
@@ -60,10 +60,10 @@ func Generate(claims jwt.Claims) (string, error) {
 
 func GenerateSession(id uint) (string, error) {
 	claims := &pufferpanel.Claim{
-		StandardClaims: jwt.StandardClaims{
-			Audience:  "session",
-			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
-			IssuedAt:  time.Now().Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{"session"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			Subject:   strconv.Itoa(int(id)),
 		},
 	}
@@ -73,10 +73,10 @@ func GenerateSession(id uint) (string, error) {
 
 func GenerateOAuthForClient(client *models.Client) (string, error) {
 	claims := &pufferpanel.Claim{
-		StandardClaims: jwt.StandardClaims{
-			Audience:  "oauth2",
-			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
-			IssuedAt:  time.Now().Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{"oauth2"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 		PanelClaims: pufferpanel.PanelClaims{
 			Scopes: map[string][]pufferpanel.Scope{
@@ -90,10 +90,10 @@ func GenerateOAuthForClient(client *models.Client) (string, error) {
 
 func GenerateOAuthForNode(nodeId uint) (string, error) {
 	claims := &pufferpanel.Claim{
-		StandardClaims: jwt.StandardClaims{
-			Audience:  "oauth2",
-			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
-			IssuedAt:  time.Now().Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{"oauth2"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 		PanelClaims: pufferpanel.PanelClaims{
 			Scopes: map[string][]pufferpanel.Scope{
@@ -132,10 +132,10 @@ func (ps *Permission) GenerateOAuthForUser(userId uint, serverId *string) (strin
 	}
 
 	claims := &pufferpanel.Claim{
-		StandardClaims: jwt.StandardClaims{
-			Audience:  "oauth2",
-			ExpiresAt: time.Now().Add(1 * time.Hour).Unix(),
-			IssuedAt:  time.Now().Unix(),
+		RegisteredClaims: jwt.RegisteredClaims{
+			Audience:  jwt.ClaimStrings{"oauth2"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
 		PanelClaims: pufferpanel.PanelClaims{
 			Scopes: map[string][]pufferpanel.Scope{},
@@ -199,7 +199,7 @@ func loadPrivate() {
 	}
 
 	if err != nil {
-		logging.Error().Printf("Internal error on token service: %s", err)
+		logging.Error.Printf("Internal error on token service: %s", err)
 		return
 	}
 
@@ -236,32 +236,32 @@ func generatePrivateKey() (privKey *ecdsa.PrivateKey, err error) {
 func loadPublic() {
 	data, err := readPublicKey(config.GetString("token.public"))
 	if err != nil {
-		logging.Error().Printf("Internal error on token service: %s", err)
+		logging.Error.Printf("Internal error on token service: %s", err)
 		return
 	}
 
-	logging.Debug().Printf("Panel key pulled from %s: %s", config.GetString("token.public"), data)
+	logging.Debug.Printf("Panel key pulled from %s: %s", config.GetString("token.public"), data)
 
 	block, _ := pem.Decode(data)
 	if block == nil {
-		logging.Error().Printf("Public key does not seem valid, as pem did not decode it")
+		logging.Error.Printf("Public key does not seem valid, as pem did not decode it")
 		return
 	}
 	if block.Type != "PUBLIC KEY" {
-		logging.Error().Printf("Public key is not valid, is a private key instead")
+		logging.Error.Printf("Public key is not valid, is a private key instead")
 		return
 	}
 
 	key, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		logging.Error().Printf("Internal error on token service: %s", err)
+		logging.Error.Printf("Internal error on token service: %s", err)
 		return
 	}
 
 	var ok bool
 	publicKey, ok = key.(*ecdsa.PublicKey)
 	if !ok {
-		logging.Error().Printf("Internal error on token service: %s", errors.New("public key is not ECDSA"))
+		logging.Error.Printf("Internal error on token service: %s", errors.New("public key is not ECDSA"))
 		return
 	}
 	timer = time.Now().Add(5 * time.Minute)
